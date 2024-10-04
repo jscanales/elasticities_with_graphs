@@ -229,9 +229,9 @@ class Simulation:
     models: dict[str, ModelMetrics] = field(default_factory=dict)
 
     # Time and place to use as reference for the demand parameters
-    consumption_analysis_interval: pd.DatetimeIndex = interval(
+    consumption_analysis_interval: pd.DatetimeIndex = field(default_factory=lambda: interval(
         start=pd.Timestamp("201901010000"), end=pd.Timestamp("202001282300")
-    )
+    ))
     price_area: PriceArea = Areas.DE2
 
     @cached_property

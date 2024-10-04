@@ -8,14 +8,14 @@ from matplotlib.figure import Figure
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 
-VERSION = "v108"
-VERSION = "v_clean"
+# VERSION = "v108"
+VERSION = "vClean"
 
 def save_figure(
-    fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", replace_existing_file:bool = True
+    fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", root:str = "simulations/EXP", replace_existing_file:bool = True
 ):
-    name = f"./plots/simulations/EXP_{version}_{figname}.{fmt}"
-    if os.path.isfile(f"./plots/simulations/EXP_{version}_{figname}.{fmt}") and not replace_existing_file:
+    name = f"./plots/{root}_{version}_{figname}.{fmt}"
+    if os.path.isfile(name) and not replace_existing_file:
         raise Exception("!!!\nCareful! Change the version or delete the existing file\n!!!\nVERSION will also affect the output file name")
     else:
         fig.savefig(name, bbox_inches='tight')

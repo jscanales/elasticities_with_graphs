@@ -411,8 +411,9 @@ log2.txt
 ## Folders
 _*
 .vscode/*
-venv/*
+.venv/*
 venv310/*
 venv311/*
 joblib/*
-data/config.py
+# data/config.py
+data/my_config.py
