@@ -417,3 +417,4 @@ venv311/*
 joblib/*
 # data/config.py
 data/my_config.py
+.Rproj.user
