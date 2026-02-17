@@ -86,8 +86,8 @@ class ModelResults:
     ci: tuple[float, float]
     model: str
     latex_name: str
-    f_statistic: float = np.NaN
-    mse: float = np.NaN
+    f_statistic: float = np.nan
+    mse: float = np.nan
 
 
 @dataclass
@@ -98,8 +98,8 @@ class MultipleModelResults(ModelResults):
     ci: dict[str, tuple[float, float]]
     model: str
     latex_name: str
-    f_statistic: float = np.NaN
-    mse: float = np.NaN
+    f_statistic: float = np.nan
+    mse: float = np.nan
 
 
 def ex_post_bias(demand: pd.Series, wind: pd.Series, nlags: int) -> float:
@@ -354,6 +354,13 @@ class IVOptions(Enum):
         - IV_2dim_ORDER
             Wind lags used as instruments, price lags and demand lags as endogenous
 
+
+    ** Non-Linear Estimator **
+        - NL_REGULAR
+            Wind lags used as instruments, P_t and P_t^2 as endogenous.
+        - NL_CONDITIONAL_WIND_CAPPED:
+            (W_t and W_t^2) as instruments, P_t and P_t^2 as endogenous, wind lags used as exogenous.
+
     
     ** Other options ** 
     (implemented but not in use)
@@ -383,7 +390,19 @@ class IVOptions(Enum):
     TRUNCATED_IV_2dim_ORDER = auto()
     IV_3dim_ORDER = auto()
     TRUNCATED_IV_3dim_ORDER = auto()
-    
+
+    # Quadratic
+    NL_REGULAR = auto()
+    NL_CONDITIONAL_WIND_CAPPED = auto()
+    NL_CONDITIONAL_WIND = auto()
+    NL_CONDITIONAL_DEMAND = auto()
+    NL_CONDITIONAL_H0 = auto()
+
+    NL_TRUNCATED_NUISANCE_ORDER = auto()
+    NL_CLEAN_2dim_ORDER = auto()
+    NL_IV_2dim_ORDER = auto()
+    NL_TRUNCATED_IV_2dim_ORDER = auto()
+
     # Special Cases
     RESIDUAL_WIND = auto()
     ARIMA_FIT_IV = auto()
@@ -456,7 +475,9 @@ class ModelInputParams:
     @property
     def name(self) -> str:
         w_component = self.get_name_component("W", self.order)
+        w2_component = self.get_name_component("W^2", self.order)
         p_component = self.get_name_component("P", self.order_price)
+        p2_component = self.get_name_component("P^2", self.order_price)
         d_component = self.get_name_component("D", self.order_d, 1)
         
         match self.strategy:
@@ -486,6 +507,27 @@ class ModelInputParams:
                 return (
                     f"I({w_component})-E({p_component})-C(D{self.order_d})"
                 )
+            
+            case IVOptions.NL_REGULAR:
+                return f"I({w_component})-E(P0, P0^2)-C()"
+            case IVOptions.NL_CONDITIONAL_WIND_CAPPED:
+                return f"I(W0, W0^2)-E(P0, P0^2)-C({self.get_name_component('W', self.order, 1)})"
+            case IVOptions.NL_CONDITIONAL_WIND:
+                return f"I(W0, W0^2)-E(P0, P0^2)-C({self.get_name_component('W', self.order, 1)}, {self.get_name_component('W^2', self.order, 1)})"
+            case IVOptions.NL_CONDITIONAL_DEMAND:
+                return f"I({self.get_name_component('W', self.order_w)}, {self.get_name_component('W^2', self.order_w)})-E(P0, P0^2)-C({self.get_name_component('D', self.order, 1)})"
+            case IVOptions.NL_CONDITIONAL_H0:
+                return f"I(W0, W0^2)-E(P0, P0^2)-C({self.get_name_component('W', self.order, 1), self.get_name_component('W^2', self.order, 1), self.get_name_component('P', self.order, 1), self.get_name_component('P^2', self.order, 1), self.get_name_component('D', self.order, 1)})"
+            case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
+                return f"I({w_component}, {w2_component})-E(P0, P0^2, D1{f':D{self.order_d}' if self.order_d else ''})-C()"
+            case IVOptions.NL_CLEAN_2dim_ORDER:
+                return f"I({w_component}, {w2_component})-E({p_component}, {p2_component})-C()"
+            case IVOptions.NL_IV_2dim_ORDER:
+                return f"I({w_component}, {w2_component})-E({p_component}, {p2_component}, D{self.order_d})-C()"
+            case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
+                return f"I({w_component}, {w2_component})-E({p_component}, {p2_component})-C(D{self.order_d})"    
+        
+
             
             case IVOptions.IV_3dim_ORDER:
                 return "IVOptions.IV_3dim_ORDER"
@@ -550,13 +592,32 @@ class ModelInputParams:
 
             case IVOptions.TRUNCATED_IV_2dim_ORDER:
                 return f"$CIV({self.var_set('W', self.order, 0)}|({self.var_set('P', self.order_price, 0)})\\rightarrow D_t|D_{{t-{self.order_d}}})$"
+            
+            case IVOptions.NL_REGULAR:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2)\\rightarrow D_t|\\emptyset)$"
+            case IVOptions.NL_CONDITIONAL_WIND_CAPPED:
+                return f"$CIV(W_t, W_t^2|(P_t, P_t^2)\\rightarrow D_t|{self.var_set('W', self.order, 1)})$"
+            case IVOptions.NL_CONDITIONAL_WIND:
+                return f"$CIV(W_t, W_t^2|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2'], self.order, 1)})$"
+            case IVOptions.NL_CONDITIONAL_DEMAND:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set('D', self.order, 1)})$"
+            case IVOptions.NL_CONDITIONAL_H0:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2' 'P', 'P^2', 'D'], self.order, 1)})$"
+            
+            case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2, D_{{t-1}}{f':D_{self.order_d}' if self.order_d > 1 else ''})\\rightarrow D_t|\\emptyset)$"
+            case IVOptions.NL_CLEAN_2dim_ORDER:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|({self.var_set(['P', 'P^2'], self.order_price, 0)})\\rightarrow D_t|\\emptyset)$"
+            case IVOptions.NL_IV_2dim_ORDER:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|({self.var_set(['P', 'P^2'], self.order_price, 0)}, D_{{t-{self.order_d}}})\\rightarrow D_t|\\emptyset)$"
+            case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|({self.var_set(['P', 'P^2'], self.order_price, 0)})\\rightarrow D_t|D_{{t-{self.order_d}}})$"
 
             case IVOptions.IV_3dim_ORDER:
                 endog = f"({self.var_set('P', self.order_price, 0)}{self.var_set('D', self.order_d, 1)})"
                 return f"$CIV({self.var_set('W', self.order, 0)}|{endog}\\rightarrow D_t|\\emptyset)$"
 
             case IVOptions.TRUNCATED_IV_3dim_ORDER:
-
                 return f"$CIV({self.var_set('W', self.order, 0)}|({self.var_set('P', self.order_price, 0)})\\rightarrow D_t|{self.var_set('D', self.order_d, 1)})$"
 
             case IVOptions.RESIDUAL_WIND:
@@ -933,6 +994,147 @@ def IV_results(
                 shifted_demand.name = f"demand_t-{i+1}"
                 exog.append(shifted_demand)
 
+        case IVOptions.NL_REGULAR:
+            instrument = [wind] + [
+                wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+            endog.append((price**2).rename("price_t^2"))
+
+        case IVOptions.NL_CONDITIONAL_WIND_CAPPED:  
+            # Add as exogenous one shifted instrument (wind) for each 'order' specified
+            instrument = [wind, (wind**2).rename("wind_t^2")]
+            endog = [price, (price**2).rename("price_t^2")]
+
+            for i in range(model.order):
+                shift_instrument = wind.copy().shift(i + 1)
+                shift_instrument.name = f"instrument shifted {i+1}"
+                exog.append(shift_instrument)
+
+        case IVOptions.NL_CONDITIONAL_WIND:  
+            # Add as exogenous one shifted instrument (wind) for each 'order' specified
+            instrument = [wind, (wind**2).rename("wind_t^2")]
+            endog = [price, (price**2).rename("price_t^2")]
+
+            for i in range(model.order):
+                shift_instrument = wind.copy().shift(i + 1)
+                shift_instrument.name = f"instrument shifted {i+1}"
+                exog.append(shift_instrument)
+
+                shift_instrument_squared = shift_instrument.copy()**2
+                shift_instrument_squared.name = f"instrument shifted {i+1} squared"
+                exog.append(shift_instrument_squared)
+
+        case IVOptions.NL_CONDITIONAL_DEMAND:  
+            # Add as exogenous one shifted instrument (wind) for each 'order' specified
+            instrument = [wind, (wind**2).rename("wind_t^2")]
+            endog = [price, (price**2).rename("price_t^2")]
+
+            for i in range(model.order_w):
+                shift_instrument = wind.copy().shift(i + 1)
+                shift_instrument.name = f"instrument shifted {i+1}"
+                instrument.append(shift_instrument)
+
+                shift_instrument_squared = shift_instrument.copy()**2
+                shift_instrument_squared.name = f"instrument shifted {i+1} squared"
+                instrument.append(shift_instrument_squared)
+
+            for i in range(model.order):
+                shifted_demand = demand.copy().shift(i + 1)
+                shifted_demand.name = f"demand_t-{i+1}"
+                exog.append(shifted_demand)
+
+        case IVOptions.NL_CONDITIONAL_H0:
+            instrument = [wind, (wind**2).rename("wind_t^2")]
+            endog = [price, (price**2).rename("price_t^2")]
+            # exog = [] # For some reason, this estimator won't run with a constant
+            for i in range(model.order):
+                shifted_wind = wind.copy().shift(i + 1)
+                shifted_wind.name = f"wind_t-{i+1}"
+                exog.append(shifted_wind)
+
+                # shifted_wind_squared = wind.copy()**2
+                # shifted_wind_squared.name = f"wind_t-{i+1} squared"
+                # exog.append(shifted_wind_squared)
+
+                shifted_price = price.copy().shift(i + 1)
+                shifted_price.name = f"price_t-{i+1}"
+                exog.append(shifted_price)
+
+                # shifted_price_squared = price.copy()**2
+                # shifted_price_squared.name = f"price_t-{i+1} squared"
+                # exog.append(shifted_price_squared)
+
+                shifted_demand = demand.copy().shift(i + 1)
+                shifted_demand.name = f"demand_t-{i+1}"
+                exog.append(shifted_demand)
+
+        case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
+            if model.order == 1:
+                print(f"Careful! T-NIV 1 is identical to NIV 1")
+
+            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+                wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+
+            endog = [price, (price**2).rename("price_t^2")] + [
+                demand.copy().shift(i).rename(f"demand_t-{i}")
+                for i in range(1, model.order_d + 1)
+            ]
+
+        case IVOptions.NL_CLEAN_2dim_ORDER:
+            assert model.order >= 3, "Order must be at least 3"
+
+            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+                wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+            endog = [price, (price**2).rename("price_t^2")] + [
+                price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (price**2).shift(i).rename(f"price_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+        
+        case IVOptions.NL_IV_2dim_ORDER:
+            assert model.order >= 3, "Order must be at least 3"
+
+            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+                wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+            endog = [
+                price, 
+                (price**2).rename("price_t^2"),
+                demand.copy().shift(model.order_d).rename(f"demand_t-{model.order_d}"),
+            ] + [
+                price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order_price + 1)
+            ] + [
+                (price**2).shift(i).rename(f"price_t-{i}^2") for i in range(1, model.order_price + 1)
+            ]
+        
+        case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
+            assert model.order >= 3, "Order must be at least 3"
+
+            exog = []
+
+            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+                wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
+            ] + [
+                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+            ]
+            endog = [price, (price**2).rename("price_t^2")] + [
+                price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order_price + 1)
+            ] + [
+                (price**2).shift(i).rename(f"price_t-{i}^2") for i in range(1, model.order_price + 1)
+            ]
+            exog.append(
+                demand.copy().shift(model.order_d).rename(f"demand_t-{model.order_d}")
+            )
         case _:
             raise Exception("Use one of the predefined options")
 
@@ -991,16 +1193,18 @@ def IV_results(
         ex = analyze_column_rank(iv_model.data.exogenous)
         print("Endog")
         en = analyze_column_rank(iv_model.data.endogenous)
-        if not ex and not en:
+        print("Inst")
+        ins = analyze_column_rank(iv_model.data.instruments)
+        if not ex and not en and not ins:
             print("Exog and Endog")
-            ex_en = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous], axis=1))
+            ex_en_in = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous, iv_model.data.instruments], axis=1))
         else:
-            ex_en = []
+            ex_en_in = []
 
-        full = list(set(ex+en+ex_en))
+        full = list(set(ex+en+ins+ex_en_in))
 
         prev = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
-        print("\n\nWARNING!\nDropping columns", full, "to ensure full column rank!\n")
+        print(f"\n\nWARNING!\n{model.strategy}\nDropping columns", full, "to ensure full column rank!\n")
         data = data.drop(full)
         iv_model = IVModel(data=data, cov_type=cov_type)
         post = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
@@ -1019,6 +1223,17 @@ def IV_results(
         IVOptions.TRUNCATED_NUISANCE_ORDER,
         IVOptions.IV_3dim_ORDER,
         IVOptions.TRUNCATED_IV_3dim_ORDER,
+
+        IVOptions.NL_REGULAR,
+        IVOptions.NL_CONDITIONAL_WIND_CAPPED,
+        IVOptions.NL_CONDITIONAL_WIND,
+        IVOptions.NL_CONDITIONAL_DEMAND,
+        IVOptions.NL_CONDITIONAL_H0,
+
+        IVOptions.NL_TRUNCATED_NUISANCE_ORDER,
+        IVOptions.NL_CLEAN_2dim_ORDER,
+        IVOptions.NL_IV_2dim_ORDER,
+        IVOptions.NL_TRUNCATED_IV_2dim_ORDER,
     ]:
 
         estimate = {}
@@ -1028,9 +1243,12 @@ def IV_results(
         for var in variable_names:
             if var == "price":
                 k = "_P0"
-            elif var.startswith("price"):
+            elif var.startswith("price") and ("-") in var:
                 n = var.split("-")[1]
                 k = "_P" + n
+            elif var.startswith("price") and ("^") in var:
+                n = var.split("^")[1]
+                k = "_P0^" + n
             elif var.startswith("demand"):
                 n = var.split("-")[1]
                 k = "_D" + n

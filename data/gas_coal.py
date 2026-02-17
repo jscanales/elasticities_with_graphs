@@ -10,7 +10,7 @@ def read_csv_with_datetime_index(file_path):
     df = df.reindex(daily_index)
 
     # Fill missing values with the last valid price using forward-fill
-    df["Price"].ffill(inplace=True)
+    df["Price"] = df["Price"].ffill()
 
     price_series = df["Price"]
 

@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 import scipy.optimize as opt
+import matplotlib.pyplot as plt
 
 from enum import Enum, auto
 from functools import lru_cache, cached_property
@@ -481,70 +482,6 @@ def average_supply_price(
     ) / SUPPLY_SLOPE
 
 
-# @dataclass(frozen=True)
-# class Demand:
-#     """Demand class to store demand curve, when called with timestamp t returns a quantity
-
-#     FORMULA: self.constant + self.elasticity * price + ar + error
-
-#     base_constant: float
-#     lags: dict[int, float]
-#     elasticity: float
-#     error: RandomCached | AutocorrelatedCached
-#     average_supply_price: float"""
-
-#     base_constant: float
-#     lags: dict[int, float]
-#     elasticity: float
-#     error: RandomCached | AutocorrelatedCached
-#     average_supply_price: float
-
-#     @cached_property
-#     def constant(self) -> float:
-#         # intercept of demand equation/function
-#         return (self.base_constant) * (
-#             1 - sum(self.lags.values())
-#         ) - self.elasticity * self.average_supply_price
-
-#     # @property
-#     # def formula(self) -> str:
-#     #     lags = " + ".join([f"{v}y<sub>t{k}</sub>" for k, v in self.lags.items()])
-#     #     return f"y<sub>t</sub> = {self.constant} + {lags} + {self.elasticity}&#8727;price + &#949;<sub>t</sub> + {self.error.normal}"
-
-#     @property
-#     def formula(self) -> str:
-#         lags = " + ".join([f"{v}*D_{f't-{k}'}" for k, v in self.lags.items()])
-#         return f"$D_t = {self.constant} + {lags} + {self.elasticity}*P_t + {self.error.normal}"
-
-#     def __call__(
-#         self, price: float, time: pd.Timestamp, lagged_demand: dict[int, float] = dict()
-#     ) -> float:
-#         for k in self.lags.keys():
-#             assert (
-#                 k in lagged_demand
-#             ), f"A demand of lag {k} should be included in the input"
-
-#         ar = sum((lagged_demand[l] * coef for l, coef in self.lags.items()))
-#         error = self.error(
-#             time
-#         )  # + (0.9*self.error(time - pd.Timedelta(hours=1)) if time - pd.Timedelta(hours=1) in INTERVAL else 0)
-
-#         # TODO: check that the elasticity has to be summed with the constant
-#         # IMPORTANT: functional form of demand function
-#         #            assuming linear dependency on price
-#         #            alternative: price ** self.elasticity for an exponential form
-
-#         return self.constant + self.elasticity * price + ar + error
-
-#     def fallback(self, time) -> float:
-#         average_price = (
-#             57.0  # Just an assumption to let the series reach stationarity quicker
-#         )
-#         return (self.constant + average_price * self.elasticity) / (
-#             1 - sum(self.lags.values())
-#         )
-
-
 @dataclass(frozen=True)
 class IndividualDemand:
     """Demand class to store demand curve, when called with timestamp t returns a quantity
@@ -693,6 +630,94 @@ class AggregatedDemand:
 
     def copy(self) -> "AggregatedDemand":
         return AggregatedDemand(components=[d.copy() for d in self.components])
+    
+
+@dataclass(frozen=True)
+class NonLinearDemand:
+    """Demand class to store demand curve, when called with timestamp t returns a quantity
+
+    FORMULA: self.constant + b_lin*price + b_sqr*price^2 + ar + error
+
+    base_constant: float
+    lags: dict[int, float]
+    b_lin: float
+    b_sqr: float
+    error: RandomCached | AutocorrelatedCached
+    average_supply_price: float
+    cross_price_elasticity: dict[int, float]"""
+
+    base_constant: float
+    lags: dict[int, float]
+    b_lin: float
+    b_sqr: float
+    error: RandomCached | AutocorrelatedCached
+    average_supply_price: float
+    cross_price_elasticity: dict[int, float]
+
+    @cached_property
+    def constant(self) -> float:
+        return (
+            (self.base_constant) * (1 - sum(self.lags.values())) - 
+            (
+                self.b_lin + sum(self.cross_price_elasticity.values())
+            ) * self.average_supply_price - 
+            (
+                self.b_sqr * self.average_supply_price**2
+            )
+            )
+
+    def __call__(
+        self,
+        price: float,
+        time: pd.Timestamp,
+        lagged_price: dict[int, float],
+        lagged_demand: dict[int, float] = dict(),
+    ) -> float:
+        for k in self.lags.keys():
+            assert (
+                k in lagged_demand
+            ), f"A demand of lag {k} should be included in the input"
+
+        ar = sum((lagged_demand[l] * coef for l, coef in self.lags.items()))
+
+        for k in self.cross_price_elasticity.keys():
+            assert (
+                k in lagged_price
+            ), f"A price of lag {k} should be included in the input"
+
+        cross_price_elasticity = sum(
+            (lagged_price[l] * coef for l, coef in self.cross_price_elasticity.items())
+        )
+
+        error = self.error(time)
+
+        return (
+            self.constant
+            + self.b_lin * price
+            + self.b_sqr * price**2
+            + cross_price_elasticity
+            + ar
+            + error
+        )
+
+    def fallback(self, time) -> float:
+        average_price = (
+            57.0  # Just an assumption to let the series reach stationarity quicker
+        )
+        return (self.constant + average_price * self.b_lin + average_price**2 * self.b_sqr) / (
+            1 - sum(self.lags.values())
+        )
+
+    def copy(self) -> "NonLinearDemand":
+        return NonLinearDemand(
+            base_constant=self.base_constant,
+            b_lin=self.b_lin,
+            b_sqr=self.b_sqr,
+            error=self.error,
+            lags=self.lags,
+            average_supply_price=self.average_supply_price,
+            cross_price_elasticity=self.cross_price_elasticity,
+        )
 
 
 @dataclass
@@ -877,6 +902,190 @@ class IndEquilibrium:
         return IndEquilibrium(
             demand=self.demand, supply=self.supply, times=self.times.copy()
         )
+    
+
+@dataclass(frozen=True)
+class NonLinEquilibrium:
+    """Class to manage a NonLinearDemand curve and a Supply curve to be cleared over a timeperiod
+
+    supply: Supply
+    demand: NonLinearDemand
+    times: pd.DatetimeIndex
+
+    method .clearing conducts the optimization and returns an
+    'EquilibriumResults' instance with the demand, supply and price series
+    """
+
+    supply: Supply
+    demand: NonLinearDemand
+
+    times: pd.DatetimeIndex
+    analytical_solution: bool = True
+
+    @cached_property
+    def index(self) -> pd.DatetimeIndex:
+        assert isinstance(self.clearing.price.index, pd.DatetimeIndex)
+        return pd.DatetimeIndex(data=self.clearing.price.index)
+
+    @cached_property
+    def nlags(self) -> int:
+        return len(self.demand.lags)
+
+    def calculate_price(
+        self,
+        time: pd.Timestamp,
+        lagged_price: dict[int, float],
+        lagged_demand: dict[int, float],
+    ):
+        ar_demand_term: float = sum(
+            (lagged_demand[l] * coef for l, coef in self.demand.lags.items())
+        )
+        cross_price_term = sum(
+            (
+                lagged_price[l] * coef
+                for l, coef in self.demand.cross_price_elasticity.items()
+            )
+        )
+
+        try:
+            w = self.supply.wind.at[time]
+        except KeyError as e:
+            print(f"error {e} with wind")
+        try:
+            w = self.supply.error(time)
+        except KeyError as e:
+            print(f"error {e} with supply_error")
+        try:
+            d = self.demand.error(time)
+        except KeyError as e:
+            print(f"error {e} with demand_error")
+
+        RHS = (
+            self.demand.constant
+            + ar_demand_term
+            + cross_price_term
+            + self.demand.error(time)
+            - self.supply.intercept
+            - self.supply.wind.at[time]
+            - self.supply.error(time)
+        )
+
+        A = self.demand.b_sqr
+        B = self.demand.b_lin - self.supply.slope
+        C = RHS
+        # We solve the AP^2 + BP + C = 0 equation
+        disc = B**2 - 4 * A * C
+        if disc < 0:
+            raise ValueError("No real equilibrium price")
+        sqrt_disc = np.sqrt(disc)
+        p1 = (-B + sqrt_disc) / (2 * A)
+        p2 = (-B - sqrt_disc) / (2 * A)
+
+        q1 = self.supply(price=p1, time=time)
+        q2 = self.supply(price=p2, time=time)
+        eq_p = None
+        if q1 < 0 and q2 >= 0:
+            eq_p = p2
+        elif q2 < 0 and q1 >= 0:
+            eq_p = p1
+        elif q2 >= 0 and q1 >= 0:
+            raise ValueError(
+                f"""There are two reasonable equilibrium prices, 
+                \t*) {p1}€/MWh leads to {q1} MW
+                \t*) {p2}€/MWh leads to {q2} MW
+                """
+            )
+        else:
+            raise ValueError(
+                f"""Both equilibrium prices lead to negative quantities, 
+                \t*) {p1}€/MWh leads to {q1} MW
+                \t*) {p2}€/MWh leads to {q2} MW
+                """
+            )
+
+        return eq_p
+
+    @cached_property
+    def clearing(self) -> EquilibriumResults:
+        pri: dict[int, float] = {}
+        dem: dict[int, float] = {}
+        sup: dict[int, float] = {}
+
+        # using enumerate appears to change the hash around the light saving time
+        # not sure why this is the case. Would be interesting to investigate!
+        for i in range(len(self.times)):
+            lagged_demand: dict[int, float] = {}
+            for lag in self.demand.lags.keys():
+                lagged_i = i + lag
+
+                if lagged_i >= 0:
+                    lagged_demand[lag] = dem[lagged_i]
+                else:
+                    lagged_demand[lag] = self.demand.fallback(lagged_i)
+
+            lagged_price: dict[int, float] = {}
+            for lag in self.demand.cross_price_elasticity.keys():
+                lagged_i = i + lag
+
+                if lagged_i >= 0:
+                    lagged_price[lag] = pri[lagged_i]
+                else:
+                    lagged_price[lag] = self.demand.average_supply_price
+
+            if self.analytical_solution:
+                try:
+                    price = self.calculate_price(
+                        time=self.times[i],
+                        lagged_demand=lagged_demand,
+                        lagged_price=lagged_price,
+                    )
+                except ValueError as e:
+                    plt.scatter(dem.values(), pri.values())
+                    print(e)
+                    break
+            else:
+                # function to be minimized
+                def objective_function(price, time=self.times[i]):
+                    return self.demand(
+                        price=price,
+                        time=time,
+                        lagged_demand=lagged_demand,
+                        lagged_price=lagged_price,
+                    ) - self.supply(price=price, time=time)
+
+                result = opt.root_scalar(  # type: ignore
+                    objective_function,
+                    # args=(time,),
+                    bracket=[-100.0, 1000.0],
+                    method="brentq",
+                    xtol=1e-12,
+                )
+
+                if not result.converged:
+                    raise ValueError("Failed to find clearing price")
+                price = result.root
+
+            pri[i] = price
+            dem[i] = self.demand(
+                time=self.times[i],
+                price=price,
+                lagged_demand=lagged_demand,
+                lagged_price=lagged_price,
+            )
+            sup[i] = self.supply(time=self.times[i], price=price)
+
+        return EquilibriumResults.from_dict(
+            demand=dem,
+            supply=sup,
+            price=pri,
+            times=self.times,
+        )
+
+    def copy(self) -> "NonLinEquilibrium":
+        return NonLinEquilibrium(
+            demand=self.demand, supply=self.supply, times=self.times.copy()
+        )
+
 
 
 @dataclass(frozen=True)

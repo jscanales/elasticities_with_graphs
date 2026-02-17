@@ -9,6 +9,7 @@ a StructuralModel to produce IV estimates from synthetic data.
 Results are handled by the class ModelMetrics.
 """
 
+from multiprocessing import Value
 import numpy as np
 import pandas as pd
 import random
@@ -16,6 +17,8 @@ import random
 from dataclasses import dataclass, field
 from functools import cached_property
 from enum import Enum, auto
+
+from tqdm import tqdm
 
 from model import Dummy, HourlySeries, interval
 from database import PriceArea, Areas
@@ -29,6 +32,8 @@ from estimation import (
 from synthetic import (
     AggEquilibrium,
     IndEquilibrium,
+    NonLinEquilibrium,
+    NonLinearDemand,
     Supply,
     IndividualDemand,
     AggregatedDemand,
@@ -111,7 +116,7 @@ class ModelMetrics:
         try:
             return sum(self.estimates) / self.n
         except ZeroDivisionError:
-            return np.NaN
+            return np.nan
 
     @property
     def average_distance(self) -> float:
@@ -173,6 +178,7 @@ class StructuralModel(Enum):
     Model_II = auto()  # heterogeneous demand
     Model_III = auto()  # cross price elasticity
     Model_IV = auto()  # complex model
+    Model_V = auto()  # nonlinear demand
 
 
 @dataclass
@@ -321,10 +327,10 @@ class Simulation:
 
     def analyze_equilibrium(
         self,
-        eq: IndEquilibrium | AggEquilibrium,
+        eq: IndEquilibrium | AggEquilibrium | NonLinEquilibrium,
         models: list[ModelInputParams],
         controls: bool,
-        print_results:bool
+        verbose:bool,
     ):
         """Analyzes equilibrium using specified models
         Part of running a simulation, essentially producing IV_results"""
@@ -334,7 +340,8 @@ class Simulation:
             print(len(eq.supply.wind)) 
 
         for index, mod in enumerate(models):
-            print(f"starting with {mod.strategy}")
+            if verbose:
+                print(f"starting with {mod.strategy}")
             try:
                 result: ModelResults = IV_results(
                     price_area=self.price_area,
@@ -354,7 +361,7 @@ class Simulation:
             #     raise Exception("One of the models is not specified correctly", mod.strategy)
 
             if got_result:
-                if print_results:
+                if verbose:
                     print(result.estimate)
                 self.add_result(result)
 
@@ -363,13 +370,17 @@ class Simulation:
         self.models.clear()
 
     def get_equilibrium(
-        self, demand: AggregatedDemand | IndividualDemand, supply: Supply
-    ) -> IndEquilibrium | AggEquilibrium:
+        self, demand: AggregatedDemand | IndividualDemand | NonLinearDemand, supply: Supply
+    ) -> IndEquilibrium | AggEquilibrium | NonLinEquilibrium:
         """Runs the simulation with specified parameters and
         runs the analysis of the time series for the specified estimators"""
         if isinstance(demand, AggregatedDemand):
             eq = AggEquilibrium(
                 supply=supply.copy(), demand=demand.copy(), times=self.interval
+            )
+        elif isinstance(demand, NonLinearDemand):
+            eq = NonLinEquilibrium(
+                supply=supply.copy(), demand=demand.copy(), times=self.interval,
             )
         else:
             eq = IndEquilibrium(
@@ -402,7 +413,7 @@ class Simulation:
 
         eq = self.get_equilibrium(demand, supply)
 
-        self.analyze_equilibrium(eq=eq, models=estimators, controls=controls, print_results=progress)
+        self.analyze_equilibrium(eq=eq, models=estimators, controls=controls, verbose=progress)
 
         if progress:
             print(f"Simulation {i+1} concluded. \t Seed No. {seed}\n")
@@ -427,7 +438,7 @@ class Simulation:
 
     def get_demand(
         self, model: StructuralModel, demand_param: float|None = None
-    ) -> IndividualDemand | AggregatedDemand:
+    ) -> IndividualDemand | AggregatedDemand | NonLinearDemand:
         """Gets the demand based on the structural equation for Models I, II and III.
 
     Args:
@@ -445,6 +456,7 @@ class Simulation:
             StructuralModel.Model_I: 0.9,
             StructuralModel.Model_II: 0.9,
             StructuralModel.Model_III: 50,
+            StructuralModel.Model_V: 0.9,
         }.get(model, None)
 
         match model:
@@ -511,6 +523,18 @@ class Simulation:
                         ),
                     ]
                 )
+            
+            case StructuralModel.Model_V:
+                nl_dem = NonLinearDemand(
+                    base_constant=self.average_demand,
+                    lags={-1: demand_param},
+                    b_lin=-50,
+                    b_sqr=-0.5,
+                    error=RandomCached.normal(0, 2000),
+                    average_supply_price=self.average_price,
+                    cross_price_elasticity={},
+                )
+                return nl_dem
 
             case _:
                 raise NotImplementedError(f"Unrecognized model {model}")
@@ -525,6 +549,7 @@ class Simulation:
         preset_seeds: list[int] = [],
         wind_manual_ar_sum: float | None = None,
         wind_lags:int = 26, 
+        progress: bool = True,
     ):
         """Runs multiple simulations of a StructuralModel with specified parameters and
         runs the analysis of the synthetic time series for the specified estimators.
@@ -535,16 +560,32 @@ class Simulation:
         else:
             seeds: list[int] = random.sample(range(1, 1000001), runs)
 
-        for n, seed in enumerate(seeds):
+        for n, seed in enumerate(tqdm(seeds, disable=progress)):
             np.random.seed(seed)
-
-            self.run_single_simulation(
-                i=simulation_count + n,
-                seed=seed,
-                model=model,
-                demand_arg=demand_arg,
-                estimators=estimators,
-                wind_manual_ar_sum=wind_manual_ar_sum,
-                wind_lags=wind_lags,
-                controls=False,
-            )
+            run : bool = False
+            attempts = 0
+            e = KeyError()
+            while not run and attempts < 3:
+                try:
+                    attempts += 1
+                    self.run_single_simulation(
+                        i=simulation_count + n,
+                        seed=seed,
+                        model=model,
+                        demand_arg=demand_arg,
+                        estimators=estimators,
+                        wind_manual_ar_sum=wind_manual_ar_sum,
+                        wind_lags=wind_lags,
+                        controls=False,
+                        progress=progress
+                    )
+                    run = True
+                except (KeyError, ValueError) as e:
+                    print(e)
+                    new_seed = False
+                    while not new_seed:
+                        seed = random.sample(range(1, 1000001), 1)[0]
+                        if seed not in seeds:
+                            new_seed = True
+            if attempts > 3:
+                raise e

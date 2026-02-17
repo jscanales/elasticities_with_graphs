@@ -758,7 +758,7 @@ class HourlySeries:
 def calender_mean(ds: pd.Series, freq: str) -> pd.Series:
     # label='left' and closed='left' are used to ensure the same behaviour between daily and weekly resampling
     assert freq in [
-        "H",
+        "h",
         "D",
         "W-MON",
         "MS",
@@ -772,7 +772,7 @@ def average(ds: pd.Series, freq: str, delay: int | None = None) -> pd.Series:
 
     levels = str(ds.name).split(".")
     # H can be omitted when aggregating
-    if levels[-1] == "H":
+    if levels[-1] == "h":
         del levels[-1]
 
     levels = levels + [f"{freq}"]
@@ -787,7 +787,7 @@ def average(ds: pd.Series, freq: str, delay: int | None = None) -> pd.Series:
 
 
 def lag(ds: pd.Series, freq: str, delay: int) -> pd.Series:
-    assert freq in ["H", "D", "M"]
+    assert freq in ["h", "D", "M"]
 
     new_ds = ds.shift(periods=delay, freq=freq)
     new_ds.name = str(ds.name) + f".L({str(delay) + freq})"
@@ -798,7 +798,7 @@ def interval(start, end) -> pd.DatetimeIndex:
     return pd.date_range(
         start=start,
         end=end,
-        freq="H",
+        freq="h",
         tz="Europe/Berlin",
     )
 

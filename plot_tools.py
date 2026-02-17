@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 # VERSION = "v108"
 VERSION = "vClean"
+VERSION = "v200"
 
 def save_figure(
     fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", root:str = "simulations/EXP", replace_existing_file:bool = True
