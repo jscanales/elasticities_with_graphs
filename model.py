@@ -402,7 +402,7 @@ class IVModel:
             exog=self.data.exogenous,  # <- dummy + control
             endog=self.data.endogenous,  # <- price
             instruments=self.data.instruments,  # <- wind
-        ).fit(cov_type=self.cov_type)
+        ).fit(cov_type=self.cov_type, kernel="bartlett", bandwidth=12, debiased=True)
 
 
 def to_series(index, values: Sequence[float | bool | None], name: str) -> pd.Series:

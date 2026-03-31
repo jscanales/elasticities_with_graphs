@@ -712,7 +712,7 @@ def analyze_column_rank(df, verbose:bool=False) -> list[str]:
 
     return dependent_columns
 
-def IV_results(
+def get_IV_model(
     demand: pd.Series,
     price: pd.Series,
     wind: pd.Series,
@@ -724,25 +724,9 @@ def IV_results(
     cov_type: str = "kernel",
     log_log: bool = False,
     **kwargs,
-) -> ModelResults:
-    """
-    Returns the ModelResults of an IV analysis, following the different IV model options
-
-    Parameters:
-    ------
-    demand: pd.Series,
-    price: pd.Series,
-    wind: pd.Series,
-    series: HourlySeries,
-    dummy: Dummy,
-    price_area: PriceArea,
-    model: ModelInputParams,
-    controls: bool = False,
-    cov_type: str = "kernel",
-    log_log: bool = False,
-    **kwargs,"""
-
-    # Defaults for REGULAR model
+) -> IVModel:
+    
+        # Defaults for REGULAR model
     instrument = [wind]
     endog = [price]
 
@@ -1184,7 +1168,7 @@ def IV_results(
         non_holiday_mask = series.timestamps[~(holidays_data == 1)]
         data.subset(non_holiday_mask, exclude=())   # TODO: decide through kwargs whether to then exclude the holidays control or not
 
-    iv_model = IVModel(data=data, cov_type=cov_type)
+    iv_model = IVModel(data=data, cov_type=cov_type, )
     try:
         fitted: IVResults = iv_model.fitted_model  # type: ignore
     except ValueError as e:
@@ -1212,6 +1196,46 @@ def IV_results(
 
         fitted: IVResults = iv_model.fitted_model  # type: ignore
 
+    return iv_model
+
+def IV_results(
+    demand: pd.Series,
+    price: pd.Series,
+    wind: pd.Series,
+    series: HourlySeries,
+    dummy: Dummy,
+    price_area: PriceArea,
+    model: ModelInputParams,
+    controls: bool = False,
+    cov_type: str = "kernel",
+    log_log: bool = False,
+    **kwargs,
+) -> ModelResults:
+    """
+    Returns the ModelResults of an IV analysis, following the different IV model options
+
+    Parameters:
+    ------
+    demand: pd.Series,
+    price: pd.Series,
+    wind: pd.Series,
+    series: HourlySeries,
+    dummy: Dummy,
+    price_area: PriceArea,
+    model: ModelInputParams,
+    controls: bool = False,
+    cov_type: str = "kernel",
+    log_log: bool = False,
+    **kwargs,"""
+
+    iv_model: IVModel = get_IV_model(
+        demand=demand, price=price, wind=wind,
+        series=series, dummy=dummy, price_area=price_area, 
+        model=model, controls=controls, cov_type=cov_type, log_log=log_log,
+        kwargs=kwargs
+    )
+
+    fitted: IVResults = iv_model.fitted_model  # type: ignore
 
     mse = 0
 
@@ -1275,7 +1299,7 @@ def IV_results(
             estimate=price_coeff,
             ci=price_ci,
             model=model.name,
-            latex_name=model.latex_name if not model.strategy == IVOptions.ARIMA_FIT_IV else f"$CIV(W_t|(P_t->D_t)|ARIMA({p}, {q}, {d}))$",
+            latex_name=model.latex_name,
             f_statistic=fitted.first_stage.diagnostics["f.stat"]["price"],
             mse=mse,
         )
