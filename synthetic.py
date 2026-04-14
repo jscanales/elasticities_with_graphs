@@ -457,7 +457,8 @@ class Supply:
         # IMPORTANT : functional form of supply curve
         #           : linear dependency on price and wind speed
         error = self.error(time)
-        return SUPPLY_INTERCEPT + SUPPLY_SLOPE * price + self.wind.at[time] + error
+        wind: float = self.wind.at[time] # type: ignore   
+        return SUPPLY_INTERCEPT + SUPPLY_SLOPE * price + wind + error
 
     def copy(self) -> "Supply":
         return Supply(
@@ -483,6 +484,23 @@ def average_supply_price(
 
 
 @dataclass(frozen=True)
+class Inventory:
+    delta: float
+    theta_q: float
+    consumption: float
+
+    def law_of_motion(
+            self, 
+            past_inventory: float,
+            current_demand: float
+        ) -> float:
+        "returns new inventory level"
+        return (1 - self.delta) * past_inventory + self.theta_q * current_demand - self.consumption
+    
+DEFAULT_INVENTORY = Inventory(0.1, 0.001, 10)
+
+
+@dataclass(frozen=True)
 class IndividualDemand:
     """Demand class to store demand curve, when called with timestamp t returns a quantity
 
@@ -501,17 +519,25 @@ class IndividualDemand:
     error: RandomCached | AutocorrelatedCached
     average_supply_price: float
     cross_price_elasticity: dict[int, float]
+    inventory_beta: float
+    inventory: Inventory = DEFAULT_INVENTORY
+
+    @cached_property
+    def average_inventory_level(self) -> float:
+        return (-self.inventory.consumption+self.inventory.theta_q*self.base_constant)/(self.inventory.delta)
 
     @cached_property
     def constant(self) -> float:
         return (self.base_constant) * (1 - sum(self.lags.values())) - (
             self.elasticity + sum(self.cross_price_elasticity.values())
-        ) * self.average_supply_price
+        ) * self.average_supply_price - (
+            self.inventory_beta * self.average_inventory_level)
 
     def __call__(
         self,
         price: float,
         time: pd.Timestamp,
+        past_inventory: float,
         lagged_price: dict[int, float],
         lagged_demand: dict[int, float] = dict(),
     ) -> float:
@@ -533,11 +559,14 @@ class IndividualDemand:
 
         error = self.error(time)
 
+        inventory = past_inventory * self.inventory_beta
+
         return (
             self.constant
             + self.elasticity * price
             + cross_price_elasticity
             + ar
+            + inventory
             + error
         )
 
@@ -557,6 +586,8 @@ class IndividualDemand:
             lags=self.lags,
             average_supply_price=self.average_supply_price,
             cross_price_elasticity=self.cross_price_elasticity,
+            inventory=self.inventory,
+            inventory_beta=self.inventory_beta,
         )
 
 
@@ -570,7 +601,9 @@ class AggregatedDemand:
     Uses a list of individualDemand as components
     """
     components: list[IndividualDemand]
+    inventory: Inventory
     dataframe_demands: pd.DataFrame = field(default_factory=pd.DataFrame)
+    inventory_series: pd.Series = field(default_factory=pd.Series)
 
     def clear(self):
         self.dataframe_demands = pd.DataFrame()  # type:ignore
@@ -587,8 +620,11 @@ class AggregatedDemand:
     def formula(self) -> str:
         return ""
 
-    def store_demand(self, time, col, value):
-        self.dataframe_demands.at[time, col] = value
+    # def store_demand(self, time, col, value):
+    #     self.dataframe_demands.at[time, col] = value
+    
+    # def store_inventory(self, time, value):
+    #     self.inventory_series.at[time] = value
 
     def __call__(
         self, price: float, time: pd.Timestamp, lagged_price: dict[int, float]
@@ -613,11 +649,16 @@ class AggregatedDemand:
                 time=time,
                 lagged_price=lagged_price,
                 lagged_demand=lagged_individual_demand,
+                past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)]
             )
             # Store current individual demand
             self.dataframe_demands.at[time, i] = individual_demand
+
         # Return current sum of individual demands
-        return self.dataframe_demands.loc[time].sum()   # type: ignore
+        aggregate_demand = self.dataframe_demands.loc[time].sum()
+
+        self.inventory_series.at[time] = self.inventory.law_of_motion(past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)], current_demand=aggregate_demand)  # type: ignore
+        return aggregate_demand # type: ignore
 
     def fallback(self, time) -> float:
         for i, demand in enumerate(self.components):
@@ -629,7 +670,7 @@ class AggregatedDemand:
         return self.dataframe_demands.loc[time].sum()
 
     def copy(self) -> "AggregatedDemand":
-        return AggregatedDemand(components=[d.copy() for d in self.components])
+        return AggregatedDemand(components=[d.copy() for d in self.components], inventory=self.inventory)
     
 
 @dataclass(frozen=True)
@@ -787,6 +828,7 @@ class IndEquilibrium:
         time: pd.Timestamp,
         lagged_price: dict[int, float],
         lagged_demand: dict[int, float],
+        past_inventory: float,
     ):
         ar_demand_term: float = sum(
             (lagged_demand[l] * coef for l, coef in self.demand.lags.items())
@@ -797,6 +839,7 @@ class IndEquilibrium:
                 for l, coef in self.demand.cross_price_elasticity.items()
             )
         )
+        inventory_term = self.demand.inventory_beta * past_inventory
 
         try:
             w = self.supply.wind.at[time]
@@ -817,9 +860,10 @@ class IndEquilibrium:
             self.demand.constant
             + cross_price_term
             + ar_demand_term
+            + inventory_term
             + self.demand.error(time)
             - self.supply.intercept
-            - self.supply.wind.at[time]
+            - self.supply.wind.at[time] # type: ignore
             - self.supply.error(time)
         ) / (
             self.supply.slope
@@ -832,6 +876,7 @@ class IndEquilibrium:
         pri: dict[int, float] = {}
         dem: dict[int, float] = {}
         sup: dict[int, float] = {}
+        inv: dict[int, float] = {}
 
         # using enumerate appears to change the hash around the light saving time
         # not sure why this is the case. Would be interesting to investigate!
@@ -854,11 +899,19 @@ class IndEquilibrium:
                 else:
                     lagged_price[lag] = self.demand.average_supply_price
 
+            if i > 0:
+                if i-1 not in inv:
+                    print(inv)
+                past_inventory = inv[i-1]
+            else:
+                past_inventory = self.demand.average_inventory_level
+
             if self.analytical_solution:
                 price = self.calculate_price(
                     time=self.times[i],
                     lagged_demand=lagged_demand,
                     lagged_price=lagged_price,
+                    past_inventory=past_inventory,
                 )
             else:
                 # function to be minimized
@@ -868,6 +921,7 @@ class IndEquilibrium:
                         time=time,
                         lagged_demand=lagged_demand,
                         lagged_price=lagged_price,
+                        past_inventory=past_inventory,
                     ) - self.supply(price=price, time=time)
 
                 result = opt.root_scalar(  # type: ignore
@@ -881,6 +935,8 @@ class IndEquilibrium:
                 if not result.converged:
                     raise ValueError("Failed to find clearing price")
                 price = result.root
+            
+            assert isinstance(price, float)
 
             pri[i] = price
             dem[i] = self.demand(
@@ -888,8 +944,10 @@ class IndEquilibrium:
                 price=price,
                 lagged_demand=lagged_demand,
                 lagged_price=lagged_price,
+                past_inventory=past_inventory,
             )
             sup[i] = self.supply(time=self.times[i], price=price)
+            inv[i] = self.demand.inventory.law_of_motion(past_inventory=past_inventory, current_demand=dem[i])
 
         return EquilibriumResults.from_dict(
             demand=dem,
@@ -966,7 +1024,7 @@ class NonLinEquilibrium:
             + cross_price_term
             + self.demand.error(time)
             - self.supply.intercept
-            - self.supply.wind.at[time]
+            - self.supply.wind.at[time] # type: ignore
             - self.supply.error(time)
         )
 
@@ -975,7 +1033,7 @@ class NonLinEquilibrium:
         C = RHS
         # We solve the AP^2 + BP + C = 0 equation
         disc = B**2 - 4 * A * C
-        if disc < 0:
+        if disc < 0:    # type: ignore
             raise ValueError("No real equilibrium price")
         sqrt_disc = np.sqrt(disc)
         p1 = (-B + sqrt_disc) / (2 * A)
@@ -1040,7 +1098,7 @@ class NonLinEquilibrium:
                         lagged_price=lagged_price,
                     )
                 except ValueError as e:
-                    plt.scatter(dem.values(), pri.values())
+                    plt.scatter(dem.values(), pri.values()) # type: ignore
                     print(e)
                     break
             else:
@@ -1171,7 +1229,7 @@ class AggEquilibrium:
             d1_sum
             + d2_sum
             - self.supply.intercept
-            - self.supply.wind.at[time]
+            - self.supply.wind.at[time] # type: ignore
             - self.supply.error(time)
         ) / (
             self.supply.slope

@@ -45,6 +45,7 @@ from synthetic import (
     SUPPLY_INTERCEPT,
     SUPPLY_SIGMA,
     SUPPLY_SLOPE,
+    DEFAULT_INVENTORY,
 )
 
 
@@ -178,7 +179,11 @@ class StructuralModel(Enum):
     Model_II = auto()  # heterogeneous demand
     Model_III = auto()  # cross price elasticity
     Model_IV = auto()  # complex model
-    Model_V = auto()  # nonlinear demand
+    Model_V = auto()  # nonlinear demand (Model I but squared)
+    Model_VI = auto()  # stockpile
+
+
+
 
 
 @dataclass
@@ -457,6 +462,7 @@ class Simulation:
             StructuralModel.Model_II: 0.9,
             StructuralModel.Model_III: 50,
             StructuralModel.Model_V: 0.9,
+            StructuralModel.Model_VI: -100,
         }.get(model, None)
 
         match model:
@@ -468,6 +474,8 @@ class Simulation:
                     error=RandomCached.normal(0, 2000),
                     average_supply_price=self.average_price,
                     cross_price_elasticity={},
+                    inventory_beta=0,
+                    inventory=DEFAULT_INVENTORY,
                 )
 
             case StructuralModel.Model_II:
@@ -480,6 +488,8 @@ class Simulation:
                             error=RandomCached.normal(0, 2000),
                             average_supply_price=self.average_price,
                             cross_price_elasticity={},
+                            inventory_beta=0,
+                            inventory=DEFAULT_INVENTORY,
                         ),
                         IndividualDemand(
                             base_constant=self.average_demand * 0.5,
@@ -488,8 +498,11 @@ class Simulation:
                             error=RandomCached.normal(0, 2000),
                             average_supply_price=self.average_price,
                             cross_price_elasticity={},
+                            inventory_beta=0,
+                            inventory=DEFAULT_INVENTORY,
                         ),
-                    ]
+                    ],
+                    inventory=DEFAULT_INVENTORY,
                 )
 
             case StructuralModel.Model_III:
@@ -500,34 +513,36 @@ class Simulation:
                     error=RandomCached.normal(0, 2000),
                     average_supply_price=self.average_price,
                     cross_price_elasticity={-1: demand_param},
+                    inventory_beta=0,
+                    inventory=DEFAULT_INVENTORY,
                 )
 
-            case StructuralModel.Model_IV:
-                return AggregatedDemand(
-                    components=[
-                        IndividualDemand(
-                            base_constant=self.average_demand * 0.5,
-                            lags={-1: 0.2},
-                            elasticity=-100,
-                            error=RandomCached.normal(0, 2000),
-                            average_supply_price=self.average_price,
-                            cross_price_elasticity={-1: 50},
-                        ),
-                        IndividualDemand(
-                            base_constant=self.average_demand * 0.5,
-                            lags={-1: 0.9},
-                            elasticity=0,
-                            error=RandomCached.normal(0, 2000),
-                            average_supply_price=self.average_price,
-                            cross_price_elasticity={},
-                        ),
-                    ]
-                )
+            # case StructuralModel.Model_IV:
+            #     return AggregatedDemand(
+            #         components=[
+            #             IndividualDemand(
+            #                 base_constant=self.average_demand * 0.5,
+            #                 lags={-1: 0.2},
+            #                 elasticity=-100,
+            #                 error=RandomCached.normal(0, 2000),
+            #                 average_supply_price=self.average_price,
+            #                 cross_price_elasticity={-1: 50},
+            #             ),
+            #             IndividualDemand(
+            #                 base_constant=self.average_demand * 0.5,
+            #                 lags={-1: 0.9},
+            #                 elasticity=0,
+            #                 error=RandomCached.normal(0, 2000),
+            #                 average_supply_price=self.average_price,
+            #                 cross_price_elasticity={},
+            #             ),
+            #         ]
+            #     )
             
             case StructuralModel.Model_V:
                 nl_dem = NonLinearDemand(
                     base_constant=self.average_demand,
-                    lags={-1: demand_param},
+                    lags={-1: demand_param},    # type: ignore
                     b_lin=-50,
                     b_sqr=-0.5,
                     error=RandomCached.normal(0, 2000),
@@ -535,6 +550,18 @@ class Simulation:
                     cross_price_elasticity={},
                 )
                 return nl_dem
+            
+            case StructuralModel.Model_VI:
+                return IndividualDemand(
+                    base_constant=self.average_demand,
+                    lags={-1: 0},
+                    elasticity=-100,
+                    error=RandomCached.normal(0, 2000),
+                    average_supply_price=self.average_price,
+                    cross_price_elasticity={},
+                    inventory_beta=demand_param,
+                    inventory=DEFAULT_INVENTORY,
+                )
 
             case _:
                 raise NotImplementedError(f"Unrecognized model {model}")

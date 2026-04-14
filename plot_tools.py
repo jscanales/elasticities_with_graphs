@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 # VERSION = "v108"
 VERSION = "vClean"
-VERSION = "v200"
+VERSION = "v201"
 
 def save_figure(
     fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", root:str = "simulations/EXP", replace_existing_file:bool = True
@@ -77,6 +77,38 @@ def plot_table(fig:Figure):
         [cross, check, check],
         [check, cross, check],
         [check, check, check],
+    ]
+
+    table_data = [
+        ["I", "II", "IV"],        
+
+        [cross, check, cross],
+
+        [check, check, check],
+        [check, cross, cross],
+
+        [check, check, check],
+
+        [check, check, cross],
+        [cross, check, cross],
+        [check, cross, cross],
+        [check, check, cross],
+    ]
+
+    table_data = [
+        ["I", "II", "III", "IV"],        
+
+        [cross, check, cross, cross],
+
+        [check, check, check, check],
+        [check, cross, cross, cross],
+
+        [check, check, check, check],
+
+        [check, check, cross, cross],
+        [cross, check, check, cross],
+        [check, cross, check, cross],
+        [check, check, check, cross],
     ]
 
     table_pos = [1, 0.001, 0.2, 1.125]  # [left, bottom, width, height]

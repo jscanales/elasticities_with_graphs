@@ -407,6 +407,7 @@ log2.txt
 *.pkl
 *.svg
 *.png
+*.pdf
 
 ## Folders
 _*
