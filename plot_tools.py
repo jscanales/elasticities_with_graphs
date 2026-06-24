@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 # VERSION = "v108"
 VERSION = "vClean"
-VERSION = "v201"
+VERSION = "v202"
 
 def save_figure(
     fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", root:str = "simulations/EXP", replace_existing_file:bool = True
@@ -63,7 +63,7 @@ MODELS=[
 def plot_table(fig:Figure):
     cross = "$\\times$"
     check = "$\\checkmark$"
-    table_data = [
+    table_data = [          # Previous models (I = inertia, II = heterogeneity, and III = cross-price)
         ["I", "II", "III"],        
 
         [cross, check, cross],
@@ -79,8 +79,8 @@ def plot_table(fig:Figure):
         [check, check, check],
     ]
 
-    table_data = [
-        ["I", "II", "IV"],        
+    table_data = [          # Current models (I = inertia, II = heterogeneity, and III = stockpiling)
+        ["I", "II", "III"],        
 
         [cross, check, cross],
 
@@ -95,21 +95,21 @@ def plot_table(fig:Figure):
         [check, check, cross],
     ]
 
-    table_data = [
-        ["I", "II", "III", "IV"],        
+    # table_data = [        # All models
+    #     ["I", "II", "III", "IV"],        
 
-        [cross, check, cross, cross],
+    #     [cross, check, cross, cross],
 
-        [check, check, check, check],
-        [check, cross, cross, cross],
+    #     [check, check, check, check],
+    #     [check, cross, cross, cross],
 
-        [check, check, check, check],
+    #     [check, check, check, check],
 
-        [check, check, cross, cross],
-        [cross, check, check, cross],
-        [check, cross, check, cross],
-        [check, check, check, cross],
-    ]
+    #     [check, check, cross, cross],
+    #     [cross, check, check, cross],
+    #     [check, cross, check, cross],
+    #     [check, check, check, cross],
+    # ]
 
     table_pos = [1, 0.001, 0.2, 1.125]  # [left, bottom, width, height]
 

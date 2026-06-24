@@ -405,6 +405,7 @@ class Simulation:
         demand_arg: None | float = None,
         wind_manual_ar_sum: float | None = None,
         progress: bool = True,
+        supply_std : float | None = None,
     ):
         """Runs the simulation with specified parameters and
         runs the analysis of the time series for the specified estimators"""
@@ -414,7 +415,7 @@ class Simulation:
             if demand_arg is not None
             else self.get_demand(model)
         )
-        supply = self.get_supply(wind_manual_ar_sum, wind_lags)
+        supply = self.get_supply(wind_manual_ar_sum, wind_lags, supply_std)
 
         eq = self.get_equilibrium(demand, supply)
 
@@ -423,7 +424,7 @@ class Simulation:
         if progress:
             print(f"Simulation {i+1} concluded. \t Seed No. {seed}\n")
 
-    def get_supply(self, wind_manual_ar_sum: float | None, wind_lags:int) -> Supply:
+    def get_supply(self, wind_manual_ar_sum: float | None, wind_lags:int, std:float | None) -> Supply:
         """Gets the standard supply equation. Supply parameters are imported from Synthetic.
         The function returns an instance of the Supply class"""
         return Supply(
@@ -436,7 +437,7 @@ class Simulation:
                 synthetic_n_observations=self.sample,
                 manual_lags_sum=wind_manual_ar_sum,
             ),
-            error=RandomCached.normal(0, SUPPLY_SIGMA),
+            error=RandomCached.normal(0, std if std is not None else SUPPLY_SIGMA),
             slope=SUPPLY_SLOPE,
             intercept=SUPPLY_INTERCEPT,
         )
@@ -539,17 +540,30 @@ class Simulation:
             #         ]
             #     )
             
+            # case StructuralModel.Model_V:
+            #     nl_dem = NonLinearDemand(
+            #         base_constant=self.average_demand,
+            #         lags={-1: demand_param},    # type: ignore
+            #         b_lin=-50,
+            #         b_sqr=-0.5,
+            #         error=RandomCached.normal(0, 2000),
+            #         average_supply_price=self.average_price,
+            #         cross_price_elasticity={},
+            #     )
+            #     return nl_dem
+            
             case StructuralModel.Model_V:
                 nl_dem = NonLinearDemand(
                     base_constant=self.average_demand,
                     lags={-1: demand_param},    # type: ignore
-                    b_lin=-50,
-                    b_sqr=-0.5,
-                    error=RandomCached.normal(0, 2000),
+                    b_lin=-20,
+                    b_sqr=-1.5,
+                    error=RandomCached.normal(0, 4000),
                     average_supply_price=self.average_price,
                     cross_price_elasticity={},
                 )
                 return nl_dem
+            
             
             case StructuralModel.Model_VI:
                 return IndividualDemand(
@@ -577,6 +591,7 @@ class Simulation:
         wind_manual_ar_sum: float | None = None,
         wind_lags:int = 26, 
         progress: bool = True,
+        supply_std : float | None = None,
     ):
         """Runs multiple simulations of a StructuralModel with specified parameters and
         runs the analysis of the synthetic time series for the specified estimators.
@@ -604,7 +619,8 @@ class Simulation:
                         wind_manual_ar_sum=wind_manual_ar_sum,
                         wind_lags=wind_lags,
                         controls=False,
-                        progress=progress
+                        progress=progress,
+                        supply_std=supply_std,
                     )
                     run = True
                 except (KeyError, ValueError) as e:

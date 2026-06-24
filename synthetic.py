@@ -170,6 +170,24 @@ class Country:
                 .rename("wind_generation")
             )
 
+    @cached_property
+    def solar_generation(self):
+        result = self.handle_german_bidding_zone_split('solar_generation')
+        if result is not None:
+            return result
+        elif self.area == Areas.PL or self.area == Areas.FR:
+            return self.clip(
+                self.series.onshore_wind_generation(price_area=self.area)
+                .ffill()
+                .rename("solar_generation")
+            )
+        else:
+            return self.clip(
+                self.series.total_wind_generation(price_area=self.area)
+                .ffill()
+                .rename("solar_generation")
+            )
+
 
 @dataclass
 class RandomCached:

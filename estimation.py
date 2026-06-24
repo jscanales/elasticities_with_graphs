@@ -1279,7 +1279,7 @@ def IV_results(
             else:
                 continue
             estimate[k] = fitted.params[var]
-            ci[k] = fitted.conf_int(level=0.95).loc[var] - fitted.params[var]
+            ci[k] = tuple((fitted.conf_int(level=0.95).loc[var] - fitted.params[var]).values)
 
         f_statistic = fitted.first_stage.diagnostics["f.stat"]["price"]
         mse = 0
