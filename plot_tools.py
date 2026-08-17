@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 # VERSION = "v108"
 VERSION = "vClean"
-VERSION = "v202"
+VERSION = "v203"
 
 def save_figure(
     fig:Figure, figname: str, version: str = VERSION, fmt: str = "pdf", root:str = "simulations/EXP", replace_existing_file:bool = True
@@ -48,36 +48,21 @@ HEIGHT = REGULAR_WIDTH*(6/10)
 WIDE_WIDTH = REGULAR_WIDTH*(3/2)
 EXTRA_WIDTH = REGULAR_WIDTH*2
 
-"Core estimators"
-MODELS=[
-        ModelInputParams(IVOptions.CONDITIONAL_WIND, order=26),
-        ModelInputParams(IVOptions.REGULAR, order=26),
-        ModelInputParams(IVOptions.CONDITIONAL_DEMAND, order=2, order_w=26),
-        ModelInputParams(IVOptions.TRUNCATED_NUISANCE_ORDER, order=26, order_d=1),
-        ModelInputParams(IVOptions.CLEAN_2dim_ORDER, order=26, order_price=1),
-        ModelInputParams(IVOptions.TRUNCATED_IV_2dim_ORDER, order=26, order_price=1),
-        ModelInputParams(IVOptions.IV_2dim_ORDER, order=26, order_price=1),
-        ModelInputParams(IVOptions.CONDITIONAL_H0, order=26),
-        ]
+# "Core estimators"
+# MODELS=[
+#         ModelInputParams(IVOptions.CONDITIONAL_WIND, order=26),
+#         ModelInputParams(IVOptions.REGULAR, order=26),
+#         ModelInputParams(IVOptions.CONDITIONAL_DEMAND, order=2, order_w=26),
+#         ModelInputParams(IVOptions.TRUNCATED_NUISANCE_ORDER, order=26, order_d=1),
+#         ModelInputParams(IVOptions.CLEAN_2dim_ORDER, order=26, order_price=1),
+#         ModelInputParams(IVOptions.TRUNCATED_IV_2dim_ORDER, order=26, order_price=1),
+#         ModelInputParams(IVOptions.IV_2dim_ORDER, order=26, order_price=1),
+#         ModelInputParams(IVOptions.CONDITIONAL_H0, order=26),
+#         ]
 
-def plot_table(fig:Figure):
+def plot_table(fig:Figure, width=0.2):
     cross = "$\\times$"
     check = "$\\checkmark$"
-    table_data = [          # Previous models (I = inertia, II = heterogeneity, and III = cross-price)
-        ["I", "II", "III"],        
-
-        [cross, check, cross],
-
-        [check, check, check],
-        [check, cross, cross],
-
-        [check, check, check],
-
-        [check, check, cross],
-        [cross, check, check],
-        [check, cross, check],
-        [check, check, check],
-    ]
 
     table_data = [          # Current models (I = inertia, II = heterogeneity, and III = stockpiling)
         ["I", "II", "III"],        
@@ -89,29 +74,14 @@ def plot_table(fig:Figure):
 
         [check, check, check],
 
-        [check, check, cross],
         [cross, check, cross],
         [check, cross, cross],
         [check, check, cross],
+        [check, check, check],
     ]
 
-    # table_data = [        # All models
-    #     ["I", "II", "III", "IV"],        
 
-    #     [cross, check, cross, cross],
-
-    #     [check, check, check, check],
-    #     [check, cross, cross, cross],
-
-    #     [check, check, check, check],
-
-    #     [check, check, cross, cross],
-    #     [cross, check, check, cross],
-    #     [check, cross, check, cross],
-    #     [check, check, check, cross],
-    # ]
-
-    table_pos = [1, 0.001, 0.2, 1.125]  # [left, bottom, width, height]
+    table_pos = [1, 0.001, width, 1.125]  # [left, bottom, width, height]
 
     table = plt.table(bbox=table_pos, cellText=table_data, loc="center", cellLoc="center")
     table.auto_set_font_size(False)

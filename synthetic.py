@@ -667,7 +667,8 @@ class AggregatedDemand:
                 time=time,
                 lagged_price=lagged_price,
                 lagged_demand=lagged_individual_demand,
-                past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)]
+                # past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)]
+                past_inventory=0
             )
             # Store current individual demand
             self.dataframe_demands.at[time, i] = individual_demand
@@ -675,7 +676,7 @@ class AggregatedDemand:
         # Return current sum of individual demands
         aggregate_demand = self.dataframe_demands.loc[time].sum()
 
-        self.inventory_series.at[time] = self.inventory.law_of_motion(past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)], current_demand=aggregate_demand)  # type: ignore
+        # self.inventory_series.at[time] = self.inventory.law_of_motion(past_inventory=self.inventory_series[time - pd.Timedelta(hours=1)], current_demand=aggregate_demand)  # type: ignore
         return aggregate_demand # type: ignore
 
     def fallback(self, time) -> float:

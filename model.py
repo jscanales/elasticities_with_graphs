@@ -357,19 +357,19 @@ class ModelData:
         )
     
     def drop(self, vars:list[str]):
-        for df in self.exogenous, self.endogenous, self.instruments:
-            for var in vars:
-                if var in df.columns:
-                    print(f"{var} should be dropped")
+        # for df in self.exogenous, self.endogenous, self.instruments:
+        #     for var in vars:
+        #         if var in df.columns:
+        #             print(f"{var} should be dropped")
 
         ex = self.exogenous.drop(columns=vars, inplace=False, errors="ignore")
         en = self.endogenous.drop(columns=vars, inplace=False, errors="ignore")
         ins = self.instruments.drop(columns=vars, inplace=False, errors="ignore")
 
-        for df in ex, en, ins:
-            for var in vars:
-                if var in df.columns:
-                    print(f"{var} has not been dropped")
+        # for df in ex, en, ins:
+        #     for var in vars:
+        #         if var in df.columns:
+        #             print(f"{var} has not been dropped")
 
         return ModelData(self.dependent, ex, en, ins)
 

@@ -10,6 +10,8 @@ which manage the settings for running an IV model,
 and the function IV_results, which runs the model.
 """
 
+from decimal import DivisionByZero
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -391,6 +393,10 @@ class IVOptions(Enum):
     IV_3dim_ORDER = auto()
     TRUNCATED_IV_3dim_ORDER = auto()
 
+    NUISANCE_BLOCKED = auto()
+    IV_2dim_ORDER_BLOCKED = auto()
+
+
     # Quadratic
     NL_REGULAR = auto()
     NL_CONDITIONAL_WIND_CAPPED = auto()
@@ -507,7 +513,11 @@ class ModelInputParams:
                 return (
                     f"I({w_component})-E({p_component})-C(D{self.order_d})"
                 )
-            
+            case IVOptions.IV_2dim_ORDER_BLOCKED:
+                return f"I({self.get_name_component("W", start=0, order=2)})-E({p_component}, D{self.order_d})-C({self.get_name_component("W", start=3, order=self.order_w)})"
+            case IVOptions.NUISANCE_BLOCKED:
+                return f"I(W0, W1)-E(P0, D1)-C({self.get_name_component("W", start=2, order=self.order_w+1)})"
+                        
             case IVOptions.NL_REGULAR:
                 return f"I({w_component})-E(P0, P0^2)-C()"
             case IVOptions.NL_CONDITIONAL_WIND_CAPPED:
@@ -592,6 +602,15 @@ class ModelInputParams:
 
             case IVOptions.TRUNCATED_IV_2dim_ORDER:
                 return f"$CIV({self.var_set('W', self.order, 0)}|({self.var_set('P', self.order_price, 0)})\\rightarrow D_t|D_{{t-{self.order_d}}})$"
+
+            case IVOptions.IV_2dim_ORDER_BLOCKED:
+                dx = f", D_{{t-{self.order_d}}}"
+                endog = f"({self.var_set('P', self.order_price, 0)}{dx})"
+                return f"$CIV({self.var_set('W', 2, 0)}|{endog}\\rightarrow D_t|{self.var_set('W', self.order_w, 3)})$"
+            case IVOptions.NUISANCE_BLOCKED:
+                endog = f"(P_t, D_{{t-1}})"
+                return f"$CIV({self.var_set('W', 1, 0)}|{endog}\\rightarrow D_t|{self.var_set('W', self.order_w+1, 2)})$"
+            
             
             case IVOptions.NL_REGULAR:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2)\\rightarrow D_t|\\emptyset)$"
@@ -602,7 +621,7 @@ class ModelInputParams:
             case IVOptions.NL_CONDITIONAL_DEMAND:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set('D', self.order, 1)})$"
             case IVOptions.NL_CONDITIONAL_H0:
-                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2' 'P', 'P^2', 'D'], self.order, 1)})$"
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2,' 'P', 'P^2', 'D'], self.order, 1)})$"
             
             case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2, D_{{t-1}}{f':D_{self.order_d}' if self.order_d > 1 else ''})\\rightarrow D_t|\\emptyset)$"
@@ -712,6 +731,22 @@ def analyze_column_rank(df, verbose:bool=False) -> list[str]:
 
     return dependent_columns
 
+def get_problematic_variables(iv_model:IVModel) -> list[str]:
+    # print("Exog")
+    ex = analyze_column_rank(iv_model.data.exogenous)
+    # print("Endog")
+    en = analyze_column_rank(iv_model.data.endogenous)
+    # print("Inst")
+    ins = analyze_column_rank(iv_model.data.instruments)
+    if not ex and not en and not ins:
+        # print("Exog and Endog")
+        ex_en_in = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous, iv_model.data.instruments], axis=1))
+    else:
+        ex_en_in = []
+
+    full = list(set(ex+en+ins+ex_en_in))
+    return full
+
 def get_IV_model(
     demand: pd.Series,
     price: pd.Series,
@@ -723,7 +758,7 @@ def get_IV_model(
     controls: bool = False,
     cov_type: str = "kernel",
     log_log: bool = False,
-    **kwargs,
+    kwargs: dict = {},
 ) -> IVModel:
     
         # Defaults for REGULAR model
@@ -795,6 +830,19 @@ def get_IV_model(
                 for i in range(1, model.order + 1)
             ]
 
+        case IVOptions.NUISANCE_BLOCKED:
+            instrument = [wind] + [
+                wind.copy().shift(1).rename(f"Wind_t-{1}")
+            ]
+            endog = [price] + [
+                demand.copy().shift(1).rename(f"demand_t-{1}")
+            ]
+
+            for i in range(1, model.order_w+1):
+                shift_instrument = wind.copy().shift(i + 1)
+                shift_instrument.name = f"instrument shifted {i+1}"
+                exog.append(shift_instrument)
+
         case IVOptions.TRUNCATED_NUISANCE_ORDER:
             if model.order == 1:
                 print(f"Careful! T-NIV 1 is identical to NIV 1")
@@ -834,6 +882,26 @@ def get_IV_model(
                 price.copy().shift(i).rename(f"price_t-{i}")
                 for i in range(1, model.order_price + 1)
             ]
+
+        case IVOptions.IV_2dim_ORDER_BLOCKED:
+            assert model.order_w >= 3, "Order must be at least 3"
+
+            instrument = [wind] + [
+                wind.copy().shift(i).rename(f"Wind_t-{i}")
+                for i in [1, 2]
+            ]
+            endog = [
+                price,
+                demand.copy().shift(model.order_d).rename(f"demand_t-{model.order_d}"),
+            ] + [
+                price.copy().shift(i).rename(f"price_t-{i}")
+                for i in range(1, model.order_price + 1)
+            ]
+
+            for i in range(2, model.order_w):
+                shift_instrument = wind.copy().shift(i + 1)
+                shift_instrument.name = f"instrument shifted {i+1}"
+                exog.append(shift_instrument)
 
         case IVOptions.IV_3dim_ORDER:
             assert model.order >= 3, "Order must be at least 3"
@@ -1032,8 +1100,9 @@ def get_IV_model(
         case IVOptions.NL_CONDITIONAL_H0:
             instrument = [wind, (wind**2).rename("wind_t^2")]
             endog = [price, (price**2).rename("price_t^2")]
-            # exog = [] # For some reason, this estimator won't run with a constant
+            exog = [] # For some reason, this estimator won't run with a constant
             for i in range(model.order):
+                if (i + 1) % 2 == 0: continue
                 shifted_wind = wind.copy().shift(i + 1)
                 shifted_wind.name = f"wind_t-{i+1}"
                 exog.append(shifted_wind)
@@ -1169,32 +1238,50 @@ def get_IV_model(
         data.subset(non_holiday_mask, exclude=())   # TODO: decide through kwargs whether to then exclude the holidays control or not
 
     iv_model = IVModel(data=data, cov_type=cov_type, )
+
     try:
         fitted: IVResults = iv_model.fitted_model  # type: ignore
     except ValueError as e:
         # Drop columns that prevent full column rank and try again
-        print("Exog")
-        ex = analyze_column_rank(iv_model.data.exogenous)
-        print("Endog")
-        en = analyze_column_rank(iv_model.data.endogenous)
-        print("Inst")
-        ins = analyze_column_rank(iv_model.data.instruments)
-        if not ex and not en and not ins:
-            print("Exog and Endog")
-            ex_en_in = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous, iv_model.data.instruments], axis=1))
+        full = get_problematic_variables(iv_model=iv_model)
+
+        if len(full) < 2:
+            prev = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
+            print(f"\n\nWARNING!\n{model.strategy}\nDropping columns", full, "to ensure full column rank!\n")
+            data = data.drop(full)
+            iv_model = IVModel(data=data, cov_type=cov_type)
+            post = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
+            print(f"Columns reduced from {prev} to {post}")
+
+            fitted: IVResults = iv_model.fitted_model  # type: ignore
+
         else:
-            ex_en_in = []
+            print(f"\n\nWARNING!\n{model.strategy}\n")
+            while len(full) > 0 and any([c in iv_model.data.exogenous.columns for c in full]):
+                # print("While... ", len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns), "variables")
+                try:
+                    iv_model = IVModel(data=data, cov_type=cov_type, )
+                    fitted: IVResults = iv_model.fitted_model  # type: ignore
+                    break
+                except ValueError as e:
+                    full = get_problematic_variables(iv_model=iv_model)
+                    droppable = [c for c in full if c in iv_model.data.exogenous.columns]
+                    if not droppable:
+                        print("Nothing is safe to drop but there are issues still: ", full)
+                        break  # Nothing safe to drop, exit the loop to avoid infinite loop
+                    rnd = list(np.random.choice(droppable, min(5, len(droppable))))
 
-        full = list(set(ex+en+ins+ex_en_in))
+                    prev = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
+                    print(f"Dropping columns", rnd, "to ensure full column rank!")
+                    data = data.drop(rnd)
+                    iv_model = IVModel(data=data, cov_type=cov_type)
+                    post = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
+                    print(f"Columns reduced from {prev} to {post}")
 
-        prev = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
-        print(f"\n\nWARNING!\n{model.strategy}\nDropping columns", full, "to ensure full column rank!\n")
-        data = data.drop(full)
-        iv_model = IVModel(data=data, cov_type=cov_type)
-        post = len(iv_model.data.exogenous.columns) + len(iv_model.data.endogenous.columns)
-        print(f"Columns reduced from {prev} to {post}")
+                    # fitted: IVResults = iv_model.fitted_model  # type: ignore
+            
+            fitted: IVResults = iv_model.fitted_model  # type: ignore
 
-        fitted: IVResults = iv_model.fitted_model  # type: ignore
 
     return iv_model
 
@@ -1248,6 +1335,8 @@ def IV_results(
         IVOptions.IV_3dim_ORDER,
         IVOptions.TRUNCATED_IV_3dim_ORDER,
 
+        IVOptions.NUISANCE_BLOCKED,
+
         IVOptions.NL_REGULAR,
         IVOptions.NL_CONDITIONAL_WIND_CAPPED,
         IVOptions.NL_CONDITIONAL_WIND,
@@ -1295,12 +1384,17 @@ def IV_results(
     else:
         price_coeff = fitted.params["price"]
         price_ci: tuple[float, float] = tuple(fitted.conf_int(level=0.95).loc["price"] - price_coeff)  # type: ignore
+
+        try:
+            f_statistic = fitted.first_stage.diagnostics["f.stat"]["price"]
+        except ZeroDivisionError:
+            f_statistic = np.inf
         return ModelResults(
             estimate=price_coeff,
             ci=price_ci,
             model=model.name,
             latex_name=model.latex_name,
-            f_statistic=fitted.first_stage.diagnostics["f.stat"]["price"],
+            f_statistic=f_statistic,
             mse=mse,
         )
 

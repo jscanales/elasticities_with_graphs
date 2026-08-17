@@ -556,8 +556,8 @@ class Simulation:
                 nl_dem = NonLinearDemand(
                     base_constant=self.average_demand,
                     lags={-1: demand_param},    # type: ignore
-                    b_lin=-20,
-                    b_sqr=-1.5,
+                    b_lin=-100,
+                    b_sqr=-1,
                     error=RandomCached.normal(0, 4000),
                     average_supply_price=self.average_price,
                     cross_price_elasticity={},
