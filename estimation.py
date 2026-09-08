@@ -409,6 +409,8 @@ class IVOptions(Enum):
     NL_IV_2dim_ORDER = auto()
     NL_TRUNCATED_IV_2dim_ORDER = auto()
 
+    NL_NUISANCE_BLOCKED = auto()
+
     # Special Cases
     RESIDUAL_WIND = auto()
     ARIMA_FIT_IV = auto()
@@ -514,9 +516,9 @@ class ModelInputParams:
                     f"I({w_component})-E({p_component})-C(D{self.order_d})"
                 )
             case IVOptions.IV_2dim_ORDER_BLOCKED:
-                return f"I({self.get_name_component("W", start=0, order=2)})-E({p_component}, D{self.order_d})-C({self.get_name_component("W", start=3, order=self.order_w)})"
+                return f'I({self.get_name_component("W", start=0, order=2)})-E({p_component}, D{self.order_d})-C({self.get_name_component("W", start=3, order=self.order_w)})'
             case IVOptions.NUISANCE_BLOCKED:
-                return f"I(W0, W1)-E(P0, D1)-C({self.get_name_component("W", start=2, order=self.order_w+1)})"
+                return f'I(W0, W1)-E(P0, D1)-C({self.get_name_component("W", start=2, order=self.order_w+1)})'
                         
             case IVOptions.NL_REGULAR:
                 return f"I({w_component})-E(P0, P0^2)-C()"
@@ -535,7 +537,10 @@ class ModelInputParams:
             case IVOptions.NL_IV_2dim_ORDER:
                 return f"I({w_component}, {w2_component})-E({p_component}, {p2_component}, D{self.order_d})-C()"
             case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
-                return f"I({w_component}, {w2_component})-E({p_component}, {p2_component})-C(D{self.order_d})"    
+                return f"I({w_component}, {w2_component})-E({p_component}, {p2_component})-C(D{self.order_d})" 
+
+            case IVOptions.NL_NUISANCE_BLOCKED:
+                return f'I({w_component}, {w2_component})-E(P0, P0^2, D1)-C({self.get_name_component("W", start=2, order=self.order_w+1)}, {self.get_name_component("W^2", start=2, order=self.order_w+1)})'   
         
 
             
@@ -621,7 +626,7 @@ class ModelInputParams:
             case IVOptions.NL_CONDITIONAL_DEMAND:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set('D', self.order, 1)})$"
             case IVOptions.NL_CONDITIONAL_H0:
-                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2,' 'P', 'P^2', 'D'], self.order, 1)})$"
+                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2', 'P', 'P^2', 'D'], self.order, 1)})$"
             
             case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2, D_{{t-1}}{f':D_{self.order_d}' if self.order_d > 1 else ''})\\rightarrow D_t|\\emptyset)$"
@@ -631,6 +636,10 @@ class ModelInputParams:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|({self.var_set(['P', 'P^2'], self.order_price, 0)}, D_{{t-{self.order_d}}})\\rightarrow D_t|\\emptyset)$"
             case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|({self.var_set(['P', 'P^2'], self.order_price, 0)})\\rightarrow D_t|D_{{t-{self.order_d}}})$"
+
+            case IVOptions.NL_NUISANCE_BLOCKED:
+                endog = f"(P_t, P_t^2, D_{{t-1}})"
+                return f"$CIV({self.var_set(['W', 'W^2'], 1, 0)}|{endog}\\rightarrow D_t|{self.var_set(['W', 'W^2'], self.order_w+1, 2)})$"
 
             case IVOptions.IV_3dim_ORDER:
                 endog = f"({self.var_set('P', self.order_price, 0)}{self.var_set('D', self.order_d, 1)})"
@@ -740,11 +749,14 @@ def get_problematic_variables(iv_model:IVModel) -> list[str]:
     ins = analyze_column_rank(iv_model.data.instruments)
     if not ex and not en and not ins:
         # print("Exog and Endog")
+        ex_en = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous], axis=1))
+        ex_in = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.instruments], axis=1))
         ex_en_in = analyze_column_rank(pd.concat([iv_model.data.exogenous, iv_model.data.endogenous, iv_model.data.instruments], axis=1))
+        ex_en_in = set(ex_en + ex_in + ex_en_in)
     else:
         ex_en_in = []
 
-    full = list(set(ex+en+ins+ex_en_in))
+    full = list(set(ex+en+ins)) + list(ex_en_in)
     return full
 
 def get_IV_model(
@@ -1047,10 +1059,10 @@ def get_IV_model(
                 exog.append(shifted_demand)
 
         case IVOptions.NL_REGULAR:
-            instrument = [wind] + [
+            instrument = [wind, (wind**2).rename("wind_t^2")] + [
                 wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
             ] + [
-                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+                (wind**2/10000).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
             ]
             endog.append((price**2).rename("price_t^2"))
 
@@ -1074,7 +1086,7 @@ def get_IV_model(
                 shift_instrument.name = f"instrument shifted {i+1}"
                 exog.append(shift_instrument)
 
-                shift_instrument_squared = shift_instrument.copy()**2
+                shift_instrument_squared = shift_instrument.copy()**2 / 10_000
                 shift_instrument_squared.name = f"instrument shifted {i+1} squared"
                 exog.append(shift_instrument_squared)
 
@@ -1088,7 +1100,7 @@ def get_IV_model(
                 shift_instrument.name = f"instrument shifted {i+1}"
                 instrument.append(shift_instrument)
 
-                shift_instrument_squared = shift_instrument.copy()**2
+                shift_instrument_squared = shift_instrument.copy()**2 / 10_000
                 shift_instrument_squared.name = f"instrument shifted {i+1} squared"
                 instrument.append(shift_instrument_squared)
 
@@ -1107,17 +1119,17 @@ def get_IV_model(
                 shifted_wind.name = f"wind_t-{i+1}"
                 exog.append(shifted_wind)
 
-                # shifted_wind_squared = wind.copy()**2
-                # shifted_wind_squared.name = f"wind_t-{i+1} squared"
-                # exog.append(shifted_wind_squared)
+                shifted_wind_squared = wind.copy()**2 / 10_000
+                shifted_wind_squared.name = f"wind_t-{i+1} squared"
+                exog.append(shifted_wind_squared)
 
                 shifted_price = price.copy().shift(i + 1)
                 shifted_price.name = f"price_t-{i+1}"
                 exog.append(shifted_price)
 
-                # shifted_price_squared = price.copy()**2
-                # shifted_price_squared.name = f"price_t-{i+1} squared"
-                # exog.append(shifted_price_squared)
+                shifted_price_squared = price.copy()**2 / 10_000
+                shifted_price_squared.name = f"price_t-{i+1} squared"
+                exog.append(shifted_price_squared)
 
                 shifted_demand = demand.copy().shift(i + 1)
                 shifted_demand.name = f"demand_t-{i+1}"
@@ -1127,10 +1139,10 @@ def get_IV_model(
             if model.order == 1:
                 print(f"Careful! T-NIV 1 is identical to NIV 1")
 
-            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+            instrument = [wind, (wind**2/ 10_000).rename("wind_t^2")] + [
                 wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
             ] + [
-                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+                (wind**2/ 10_000).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
             ]
 
             endog = [price, (price**2).rename("price_t^2")] + [
@@ -1141,24 +1153,24 @@ def get_IV_model(
         case IVOptions.NL_CLEAN_2dim_ORDER:
             assert model.order >= 3, "Order must be at least 3"
 
-            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+            instrument = [wind, (wind**2/ 10_000).rename("wind_t^2")] + [
                 wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
             ] + [
-                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+                (wind**2/ 10_000).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
             ]
             endog = [price, (price**2).rename("price_t^2")] + [
-                price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order + 1)
+                price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order_price + 1)
             ] + [
-                (price**2).shift(i).rename(f"price_t-{i}^2") for i in range(1, model.order + 1)
+                (price**2).shift(i).rename(f"price_t-{i}^2") for i in range(1, model.order_price + 1)
             ]
         
         case IVOptions.NL_IV_2dim_ORDER:
             assert model.order >= 3, "Order must be at least 3"
 
-            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+            instrument = [wind, (wind**2/ 10_000).rename("wind_t^2")] + [
                 wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
             ] + [
-                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+                (wind**2/ 10_000).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
             ]
             endog = [
                 price, 
@@ -1173,12 +1185,12 @@ def get_IV_model(
         case IVOptions.NL_TRUNCATED_IV_2dim_ORDER:
             assert model.order >= 3, "Order must be at least 3"
 
-            exog = []
+            # exog = []
 
-            instrument = [wind, (wind**2).rename("wind_t^2")] + [
+            instrument = [wind, (wind**2/ 10_000).rename("wind_t^2")] + [
                 wind.shift(i).rename(f"wind_t-{i}") for i in range(1, model.order + 1)
             ] + [
-                (wind**2).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
+                (wind**2/ 10_000).shift(i).rename(f"wind_t-{i}^2") for i in range(1, model.order + 1)
             ]
             endog = [price, (price**2).rename("price_t^2")] + [
                 price.shift(i).rename(f"price_t-{i}") for i in range(1, model.order_price + 1)
@@ -1188,6 +1200,23 @@ def get_IV_model(
             exog.append(
                 demand.copy().shift(model.order_d).rename(f"demand_t-{model.order_d}")
             )
+
+        case IVOptions.NL_NUISANCE_BLOCKED:
+            instrument = [wind, (wind**2/ 10_000).rename("wind_t^2")] + [
+                wind.shift(1).rename(f"wind_t-{1}")
+            ] + [
+                (wind**2/ 10_000).shift(1).rename(f"wind_t-{1}^2")]
+            endog = [price, (price**2).rename("price_t^2")] + [
+                demand.copy().shift(1).rename(f"demand_t-{1}")
+            ]
+
+            for i in range(1, model.order_w+1):
+                shift_instrument = wind.copy().shift(i + 1) 
+                shift_instrument.name = f"instrument shifted {i+1}"
+                exog.append(shift_instrument) 
+                squared_shift_instrument = shift_instrument.copy()**2/ 10_000
+                squared_shift_instrument.name = f"squared instrument shifted {i+1}"
+                exog.append(squared_shift_instrument) 
         case _:
             raise Exception("Use one of the predefined options")
 
@@ -1235,7 +1264,7 @@ def get_IV_model(
         assert 'd.public_holiday' in data.exogenous, "Trying to remove holidays but they are not included as controls. This is possible but not under the current implementation"
         holidays_data = data.exogenous['d.public_holiday']
         non_holiday_mask = series.timestamps[~(holidays_data == 1)]
-        data.subset(non_holiday_mask, exclude=())   # TODO: decide through kwargs whether to then exclude the holidays control or not
+        data = data.subset(non_holiday_mask, exclude=())   # TODO: decide through kwargs whether to then exclude the holidays control or not
 
     iv_model = IVModel(data=data, cov_type=cov_type, )
 
@@ -1336,6 +1365,7 @@ def IV_results(
         IVOptions.TRUNCATED_IV_3dim_ORDER,
 
         IVOptions.NUISANCE_BLOCKED,
+        IVOptions.NL_NUISANCE_BLOCKED,
 
         IVOptions.NL_REGULAR,
         IVOptions.NL_CONDITIONAL_WIND_CAPPED,

@@ -558,7 +558,7 @@ class Simulation:
                     lags={-1: demand_param},    # type: ignore
                     b_lin=-100,
                     b_sqr=-1,
-                    error=RandomCached.normal(0, 4000),
+                    error=RandomCached.normal(0, 3000),
                     average_supply_price=self.average_price,
                     cross_price_elasticity={},
                 )
