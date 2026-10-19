@@ -574,6 +574,8 @@ class ModelInputParams:
             else:
                 return f"\\{{{var}_{{t-s}}\\}}_{{s={start}}}^{{{order}}}"
         else:
+            if order == 0:
+                return ', '.join([v+'_t' for v in var])
             return f"\\{{{', '.join([v+'_{{t-s}}' for v in var])}\\}}_{{s={start}}}^{{{order}}}"
 
 
@@ -626,7 +628,7 @@ class ModelInputParams:
             case IVOptions.NL_CONDITIONAL_DEMAND:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set('D', self.order, 1)})$"
             case IVOptions.NL_CONDITIONAL_H0:
-                return f"$CIV({self.var_set(['W', 'W^2'], self.order_w, 0)}|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2', 'P', 'P^2', 'D'], self.order, 1)})$"
+                return f"$CIV(W_t, W_t^2|(P_t, P_t^2)\\rightarrow D_t|{self.var_set(['W', 'W^2', 'P', 'P^2', 'D'], self.order, 1)})$"
             
             case IVOptions.NL_TRUNCATED_NUISANCE_ORDER:
                 return f"$CIV({self.var_set(['W', 'W^2'], self.order, 0)}|(P_t, P_t^2, D_{{t-1}}{f':D_{self.order_d}' if self.order_d > 1 else ''})\\rightarrow D_t|\\emptyset)$"
